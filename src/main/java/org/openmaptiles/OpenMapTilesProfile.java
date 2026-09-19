@@ -50,6 +50,11 @@ public class OpenMapTilesProfile extends ForwardingProfile {
   public static final String LAKE_CENTERLINE_SOURCE = "lake_centerlines";
   public static final String WATER_POLYGON_SOURCE = "water_polygons";
   public static final String NATURAL_EARTH_SOURCE = "natural_earth";
+  // OGF customization: small osmium-filtered extract (boundary=administrative + referenced
+  // members only) of the same planet file, registered before OSM_SOURCE so Place.java can
+  // build an area-based country/state rank index before the main OSM pass needs to look it up -
+  // mirrors how NATURAL_EARTH_SOURCE completes before OSM_SOURCE today.
+  public static final String OGF_ADMIN_AREAS_SOURCE = "ogf_admin_areas";
   public static final String OSM_SOURCE = "osm";
   /** Index to efficiently find the imposm3 "table row" constructor from an OSM element based on its tags. */
   private final MultiExpression.Index<RowDispatch> osmMappings;
@@ -97,6 +102,9 @@ public class OpenMapTilesProfile extends ForwardingProfile {
       if (handler instanceof NaturalEarthProcessor processor) {
         registerSourceHandler(NATURAL_EARTH_SOURCE,
           (source, features) -> processor.processNaturalEarth(source.getSourceLayer(), source, features));
+      }
+      if (handler instanceof OgfAdminAreaProcessor processor) {
+        registerSourceHandler(OGF_ADMIN_AREAS_SOURCE, processor::processOgfAdminArea);
       }
       if (handler instanceof OsmWaterPolygonProcessor processor) {
         registerSourceHandler(WATER_POLYGON_SOURCE, processor::processOsmWater);
@@ -218,6 +226,22 @@ public class OpenMapTilesProfile extends ForwardingProfile {
      * @see Profile#processFeature(SourceFeature, FeatureCollector)
      */
     void processNaturalEarth(String table, SourceFeature feature, FeatureCollector features);
+  }
+
+  /**
+   * OGF customization: layers should implement this interface to subscribe to elements from the
+   * {@link #OGF_ADMIN_AREAS_SOURCE} pre-pass (a small extract of admin boundary relations/ways,
+   * used to compute real area-based ranks for country/state points since no Natural Earth data
+   * is available).
+   */
+  public interface OgfAdminAreaProcessor {
+
+    /**
+     * Process an element from the OGF admin-boundary pre-pass source.
+     *
+     * @see Profile#processFeature(SourceFeature, FeatureCollector)
+     */
+    void processOgfAdminArea(SourceFeature feature, FeatureCollector features);
   }
 
   /**

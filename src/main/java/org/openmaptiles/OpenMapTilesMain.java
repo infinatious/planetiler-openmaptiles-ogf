@@ -49,6 +49,14 @@ public class OpenMapTilesMain {
       .addShapefileSource(OpenMapTilesProfile.WATER_POLYGON_SOURCE,
         sourcesDir.resolve("water-polygons-split-3857.zip"),
         "https://data.opengeofiction.net/extracts/water-polygons-split-3857.zip")
+      // OGF customization: GeoJSON extract of admin_level=2/4 boundary polygons (produced by
+      // run.sh via `osmium export` + a filter script from the same planet file) feeding
+      // Place.java's area-based country/state rank index - see OgfAdminAreaProcessor. A GeoJSON
+      // source (not a second .addOsmSource - Planetiler only supports one OSM input file) so it
+      // can be registered as its own pre-pass, same ordering trick as natural_earth used to.
+      // No download URL: this is always derived locally, never fetched directly.
+      .addGeoJsonSource(OpenMapTilesProfile.OGF_ADMIN_AREAS_SOURCE,
+        sourcesDir.resolve("ogf-admin-areas.geojson"))
       .addOsmSource(OpenMapTilesProfile.OSM_SOURCE,
         sourcesDir.resolve(area.replaceAll("[^a-zA-Z]+", "_") + ".osm.pbf"),
         "https://data.opengeofiction.net/backups/ogf-planet.osm.pbf")

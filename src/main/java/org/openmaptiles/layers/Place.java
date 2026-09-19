@@ -83,6 +83,7 @@ import org.openmaptiles.util.OmtLanguageUtils;
 public class Place implements
   OpenMapTilesSchema.Place,
   OpenMapTilesProfile.NaturalEarthProcessor,
+  OpenMapTilesProfile.OgfAdminAreaProcessor,
   Tables.OsmContinentPoint.Handler,
   Tables.OsmCountryPoint.Handler,
   Tables.OsmStatePoint.Handler,
@@ -105,6 +106,18 @@ public class Place implements
     squareMetersToWorldArea(40_000_000), 4,
     squareMetersToWorldArea(15_000_000), 5,
     squareMetersToWorldArea(1_000_000), 6
+  ));
+  // OGF customization: AREA_RANKS above is calibrated for islands/protected areas (max bucket
+  // 640 km²) - real country/state polygons are orders of magnitude bigger than that, so every
+  // single one fell into its top MAX_VALUE bucket (rank 1) regardless of actual size. Separate,
+  // country-scaled buckets for processOgfAdminArea, same 1-6 convention (rank 1 = biggest).
+  private static final TreeMap<Double, Integer> COUNTRY_AREA_RANKS = new TreeMap<>(Map.of(
+    Double.MAX_VALUE, 1,
+    squareMetersToWorldArea(3_000_000_000_000d), 2, // ~3M km2 - largest nations
+    squareMetersToWorldArea(800_000_000_000d), 3, // ~800K km2
+    squareMetersToWorldArea(200_000_000_000d), 4, // ~200K km2
+    squareMetersToWorldArea(50_000_000_000d), 5, // ~50K km2
+    squareMetersToWorldArea(10_000_000_000d), 6 // ~10K km2 and smaller
   ));
   private static final double MIN_ISLAND_WORLD_AREA = Math.pow(4, -26); // 2^14 tiles, 2^12 pixels per tile
   private static final double CITY_JOIN_DISTANCE = GeoUtils.metersToPixelAtEquator(0, 50_000) / 256d;
@@ -200,6 +213,44 @@ public class Place implements
     }
   }
 
+  /**
+   * OGF customization: with no Natural Earth data available, this is what actually populates
+   * {@link #countries}/{@link #states} for OGF - real area of each admin_level=2/4 boundary
+   * relation, ranked the same way {@link Tables.OsmIslandPolygon}/{@link Tables.OsmBoundaryPolygon}
+   * already rank by area (see {@link #AREA_RANKS}), instead of the old hardcoded flat rank 3.
+   * Runs against the small {@link OpenMapTilesProfile#OGF_ADMIN_AREAS_SOURCE} pre-pass (produced
+   * by run.sh via {@code osmium tags-filter ... boundary=administrative}), which completes before
+   * the main OSM pass that looks these up in {@code process(Tables.OsmCountryPoint...)} /
+   * {@code process(Tables.OsmStatePoint...)} - same ordering trick as natural_earth today.
+   */
+  @Override
+  public void processOgfAdminArea(SourceFeature feature, FeatureCollector features) {
+    if (!feature.canBePolygon() || !feature.hasTag("boundary", "administrative")) {
+      return;
+    }
+    Integer adminLevel = Parse.parseRoundInt(feature.getTag("admin_level"));
+    if (adminLevel == null || (adminLevel != 2 && adminLevel != 4)) {
+      return;
+    }
+    String name = feature.getString("name");
+    if (nullOrEmpty(name)) {
+      return;
+    }
+    try {
+      double area = feature.area();
+      int rank = COUNTRY_AREA_RANKS.ceilingEntry(area).getValue();
+      var region = new NaturalEarthRegion(name, rank);
+      if (adminLevel == 2) {
+        countries.put(feature.worldGeometry(), region);
+      } else {
+        states.put(feature.worldGeometry(), region);
+      }
+    } catch (GeometryException e) {
+      e.log(stats, "ogf_admin_area",
+        "Unable to get geometry for OGF admin boundary " + feature.id());
+    }
+  }
+
   @Override
   public void process(Tables.OsmContinentPoint element, FeatureCollector features) {
     if (!nullOrEmpty(element.name())) {
@@ -217,18 +268,25 @@ public class Place implements
     if (nullOrEmpty(element.name())) {
       return;
     }
+    // OGF customization: OGF's place=country points use a plain `ref` tag for their fictional
+    // country code (e.g. "RO", "ST", "NOR") instead of the real-world-standard
+    // country_code_iso3166_1_alpha_2/ISO3166-1:alpha2/ISO3166-1 tags this was written for -
+    // confirmed directly against the actual planet data (78 country points, several with only
+    // `ref` set, several with no code tag at all). Fall back to `ref`, and - since many OGF
+    // countries have no code tag whatsoever - don't gate the whole feature on having one: the
+    // stock code returned early here with no isoA2, which silently dropped every OGF country
+    // point's name/label entirely, not just its code.
     String isoA2 = coalesce(
       nullIfEmpty(element.countryCodeIso31661Alpha2()),
       nullIfEmpty(element.iso31661Alpha2()),
-      nullIfEmpty(element.iso31661())
+      nullIfEmpty(element.iso31661()),
+      nullIfEmpty(element.source().getString("ref"))
     );
-    if (isoA2 == null) {
-      return;
-    }
     try {
-      // set country rank to 6, unless there is a match in natural earth that indicates it
-      // should be lower
-      int rank = 7;
+      // OGF customization: default rank 3 when no matching admin_level=2 boundary was found in
+      // the OGF_ADMIN_AREAS_SOURCE pre-pass (see processOgfAdminArea) - e.g. a place=country point
+      // that exists without a mapped boundary relation. Otherwise ranked by real boundary area.
+      int rank = 3;
       NaturalEarthRegion country = countries.get(element.source().worldGeometry().getCentroid());
       var names = OmtLanguageUtils.getNames(element.source().tags(), translations);
 
@@ -246,7 +304,7 @@ public class Place implements
         .setAttr(Fields.ISO_A2, isoA2)
         .setAttr(Fields.CLASS, FieldValues.CLASS_COUNTRY)
         .setAttr(Fields.RANK, rank)
-        .setMinZoom(rank - 1)
+        .setMinZoom(areaRankMinZoom(rank))
         .setSortKey(rank);
     } catch (GeometryException e) {
       e.log(stats, "omt_place_country",
@@ -254,28 +312,50 @@ public class Place implements
     }
   }
 
+  /**
+   * OGF customization: maps an {@link #AREA_RANKS}-style 1-6 rank to a minimum zoom, gapped so
+   * that only rank 1 (the largest countries/states) shows at z1-2 - the plain {@code rank - 1}
+   * formula used before area-based ranking would still show rank 2 starting at z1.
+   */
+  private static int areaRankMinZoom(int rank) {
+    return switch (rank) {
+      case 1 -> 0;
+      case 2 -> 3;
+      case 3 -> 4;
+      case 4 -> 5;
+      case 5 -> 6;
+      default -> 7;
+    };
+  }
+
   @Override
   public void process(Tables.OsmStatePoint element, FeatureCollector features) {
     try {
       // want the containing (not nearest) state polygon since we pre-filter the states in the polygon index
-      // use natural earth to filter out any spurious states, and to set the rank field
+      // use the area-ranked index to filter out any spurious states, and to set the rank field
       NaturalEarthRegion state = states.getOnlyContaining(element.source().worldGeometry().getCentroid());
+      // OGF customization: previously this whole feature was gated on finding a natural earth
+      // match (`if (state != null)`), so with no natural_earth source NO state points would ever
+      // render at all. Emit unconditionally, defaulting to rank 3 when no matching admin_level=4
+      // boundary was found in the OGF_ADMIN_AREAS_SOURCE pre-pass (see processOgfAdminArea).
+      var names = OmtLanguageUtils.getNames(element.source().tags(), translations);
+      int rank = 3;
       if (state != null) {
-        var names = OmtLanguageUtils.getNames(element.source().tags(), translations);
         if (nullOrEmpty(names.get(Fields.NAME_EN))) {
           names.put(Fields.NAME_EN, state.name);
         }
-        int rank = Math.clamp(state.rank, 1, 6);
-
-        features.point(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-          .putAttrs(names)
-          .setAttr(Fields.CLASS, element.place())
-          .setAttr(Fields.RANK, rank)
-          // TODO: This starts including every "state" point at z2, even before many countries show up.
-          //       Instead we might want to set state min zooms based on rank from natural earth?
-          .setMinZoom(2)
-          .setSortKey(rank);
+        rank = Math.clamp(state.rank, 1, 6);
       }
+
+      features.point(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+        .putAttrs(names)
+        .setAttr(Fields.CLASS, element.place())
+        .setAttr(Fields.RANK, rank)
+        // OGF customization: was a flat 2 (every state point regardless of size, even before
+        // many countries show up - see the old TODO here). Now scaled by the same area-based
+        // rank as countries, so only large states appear at low zoom.
+        .setMinZoom(areaRankMinZoom(rank))
+        .setSortKey(rank);
     } catch (GeometryException e) {
       e.log(stats, "omt_place_state",
         "Unable to get point for OSM state " + element.source().id());
