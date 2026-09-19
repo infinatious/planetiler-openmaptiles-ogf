@@ -50,6 +50,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import org.openmaptiles.OpenMapTilesProfile;
 import org.openmaptiles.generated.OpenMapTilesSchema;
 import org.openmaptiles.generated.Tables;
@@ -79,7 +80,28 @@ public class Landcover implements
   public static final ZoomFunction<Number> MIN_PIXEL_SIZE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
     13, 8,
     10, 4,
-    9, 2
+    9, 2,
+    // OGF customization: extend below z7 (was previously unreachable - see setMinZoom below).
+    // Progressively larger minimum feature size at lower zoom, in the same spirit as
+    // landcover.sql's z0-z6 cascading area thresholds (500M/200M/50M/10M/1M/500K/100K m2),
+    // just expressed as Planetiler's native tile-pixel-size mechanism instead of hand-built
+    // per-zoom SQL tables.
+    6, 4,
+    5, 8,
+    3, 20,
+    1, 40
+  ));
+  // OGF customization: proximity threshold (tile px) for merging same-subclass landcover
+  // patches at z0-6 before the MIN_PIXEL_SIZE_THRESHOLDS filter above runs - see postProcess.
+  // Larger at lower zoom since postProcess only ever sees features within one tile, and
+  // low-zoom tiles cover proportionally more real-world area, so gaps that should still count
+  // as "one cluster" (e.g. a forest broken up by a few small clearings) need a bigger radius
+  // to bridge. Keyed like Landuse.MINDIST_AND_BUFFER_SIZES: TreeMap.ceilingEntry(zoom).
+  private static final TreeMap<Integer, Double> LOW_ZOOM_MERGE_DISTANCE = new TreeMap<>(Map.of(
+    1, 8.0,
+    3, 6.0,
+    6, 4.0,
+    Integer.MAX_VALUE, 4.0
   ));
   private static final String TEMP_NUM_POINTS_ATTR = "_numpoints";
   private static final Set<String> WOOD_OR_FOREST = Set.of(
@@ -131,17 +153,39 @@ public class Landcover implements
         .setAttr(Fields.CLASS, clazz)
         .setAttr(Fields.SUBCLASS, subclass)
         .setNumPointsAttr(TEMP_NUM_POINTS_ATTR)
-        .setMinZoom(7);
+        // OGF customization: was 7. No natural_earth source means the z0-6 range that used to
+        // come from ne_*_glaciated_areas (for glaciers/ice shelves only - see processNaturalEarth
+        // above, unrelated to general landcover) is otherwise completely empty for OGF: nothing
+        // else ever supplied low-zoom landcover, since this class's own OSM-based path started at
+        // 7. landcover.sql's z0-z6 cascading-simplification views existed specifically to fill
+        // that gap for OGF; ported here as native Planetiler merging instead (see postProcess).
+        .setMinZoom(0);
     }
   }
 
   @Override
   public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) throws GeometryException {
-    if (zoom < 7 || zoom > 13) {
+    if (zoom > 13) {
       for (var item : items) {
         item.tags().remove(TEMP_NUM_POINTS_ATTR);
       }
       return items;
+    } else if (zoom <= 6) {
+      // OGF customization: merge same-subclass polygons together at low zoom, mirroring
+      // landcover.sql's "union everything, then filter by resulting area" approach - real
+      // per-zoom size filtering comes from MIN_PIXEL_SIZE_THRESHOLDS/setMinPixelSizeOverrides
+      // above instead of hand-computed real-world-meters area thresholds. Use mergeNearbyPolygons
+      // (not mergeOverlappingPolygons, used below for z7-13) since it groups by proximity
+      // (minDist) rather than requiring polygons to already touch/overlap - otherwise scattered
+      // but nearby patches of the same subclass stay separate and get individually dropped by
+      // the pixel-size filter, producing a patchy "only the biggest polygons show" result
+      // instead of "all or none" per cluster. No explicit group key needed: mergeNearbyPolygons
+      // already groups by matching attrs (subclass included).
+      for (var item : items) {
+        item.tags().remove(TEMP_NUM_POINTS_ATTR);
+      }
+      double minDistAndBuffer = LOW_ZOOM_MERGE_DISTANCE.ceilingEntry(zoom).getValue();
+      return FeatureMerge.mergeNearbyPolygons(items, 4, 4, minDistAndBuffer, minDistAndBuffer);
     } else { // z7-13
       // merging only merges polygons with the same attributes, so use this temporary key
       // to separate features into layers that will be merged separately
