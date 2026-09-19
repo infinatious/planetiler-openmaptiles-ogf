@@ -26,6 +26,7 @@ notify() {
 }
 
 cd /opt/planetiler
+mkdir -p data/sources
 notify "run.sh starting at $(date)."
 
 wget -q https://data.opengeofiction.net/backups/ogf-planet.osm.pbf -O data/sources/ogf-planet.osm.pbf
