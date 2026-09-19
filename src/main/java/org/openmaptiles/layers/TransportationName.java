@@ -50,6 +50,7 @@ import com.onthegomap.planetiler.ForwardingProfile;
 import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.collection.Hppc;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
+import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Parse;
@@ -122,10 +123,12 @@ public class TransportationName implements
   private final LongByteMap motorwayJunctionHighwayClasses = Hppc.newLongByteHashMap();
   private final LongSet motorwayJunctionNodes = new LongHashSet();
   private final Translations translations;
+  private final Stats stats;
 
   public TransportationName(Translations translations, PlanetilerConfig config, Stats stats) {
     this.config = config;
     this.translations = translations;
+    this.stats = stats;
     this.brunnel = config.arguments().getBoolean(
       "transportation_name_brunnel",
       "transportation_name layer: set to false to omit brunnel and help merge long highways",
@@ -235,6 +238,23 @@ public class TransportationName implements
     ref = nullIfEmpty(ref);
     String highway = nullIfEmpty(element.highway());
 
+    // OGF customization: port of ogfsql.sql's route-shield system (see OgfRouteRules) - takes
+    // the stock ref/relations resolved above and re-derives network type + up to 6 parsed
+    // routes from OGF's own ref-prefix/geographic-bbox conventions. Falls back to the stock
+    // relation-based network/routes below unchanged when OGF's rules don't classify this way
+    // at all (e.g. plain local streets with no route relation).
+    OgfRouteRules.Result ogfResult = null;
+    try {
+      ogfResult = OgfRouteRules.process(ref, name, element.source().worldGeometry());
+    } catch (GeometryException e) {
+      e.log(stats, "ogf_route_rules", "Unable to get geometry for OGF route classification");
+    }
+    boolean ogfClassified = ogfResult != null &&
+      (ogfResult.networkType() != null || !ogfResult.routes().isEmpty());
+    if (ogfClassified) {
+      ref = nullIfEmpty(ogfResult.ref());
+    }
+
     String highwayClass = highwayClass(element.highway(), null, element.construction(), element.manMade());
     if (element.isArea() || highway == null || highwayClass == null || (name == null && ref == null)) {
       return;
@@ -261,7 +281,9 @@ public class TransportationName implements
       .setAttr(Fields.REF, ref)
       .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
       .setAttr(Fields.NETWORK,
-        firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name : !nullOrEmpty(ref) ? "road" :
+        ogfClassified && ogfResult.networkType() != null ? ogfResult.networkType().name :
+          ogfClassified ? "road" :
+          firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name : !nullOrEmpty(ref) ? "road" :
           null)
       .setAttr(Fields.CLASS, highwayClass)
       .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, null, highway))
@@ -269,9 +291,21 @@ public class TransportationName implements
       .setSortKey(element.zOrder())
       .setMinZoom(minzoom);
 
-    // populate route_1_<something>, route_2_<something>, ... route_n_<something> tags and remove duplicates
+    // populate route_1_<something>, route_2_<something>, ... route_n_<something> tags and remove duplicates.
+    // OGF customization: when OgfRouteRules classified this way, its routes (already built and
+    // deduplicated by construction - up to 6 slots) replace the stock relation-based ones entirely.
     Set<String> routes = new HashSet<>();
-    for (var route : relations) {
+    if (ogfClassified) {
+      for (var route : ogfResult.routes()) {
+        String keyPrefix = "route_" + (routes.size() + 1) + "_";
+        routes.add(keyPrefix);
+        feature.setAttr(keyPrefix + "network", route.network());
+        feature.setAttr(keyPrefix + "ref", nullIfEmpty(route.ref()));
+        feature.setAttr(keyPrefix + "name", route.name());
+        feature.setAttr(keyPrefix + "colour", route.colour());
+      }
+    }
+    for (var route : ogfClassified ? List.<Transportation.RouteRelation>of() : relations) {
       String routeString = route.network() + "=" +
         coalesce(route.ref(), "") + "=" +
         coalesce(route.name(), "") + "=" +
