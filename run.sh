@@ -23,9 +23,16 @@ SECONDS=0
 WEBHOOK="https://discord.com/api/webhooks/1512547109805625364/mae_tCiygS4RbXGT1XGMhksxhZsjQ_9zmiQuECRaX7YcsAkDFW4_-EiYOjtgpELWk4_-"
 # PLATFORM is unset on inf-11008 (hostname alone is unambiguous there); the
 # cloud build scripts export PLATFORM=GCP/AWS before calling this so Discord
-# messages from any run consistently read "<hostname> (<platform>)".
+# messages from any run consistently read "<hostname> (<platform>)". Cloud
+# build hostnames already say "planetiler-build-..." so that's enough on its
+# own; inf-11008's hostname doesn't mention Planetiler at all, so add the
+# suffix only when the hostname itself doesn't already say it.
 notify() {
-  /opt/discord.sh --webhook-url="$WEBHOOK" --username "$(hostname)${PLATFORM:+ ($PLATFORM)}" --text "$1"
+  local host label
+  host="$(hostname)"
+  label="$host"
+  [[ "${host,,}" == *planetiler* ]] || label="$host - Planetiler"
+  /opt/discord.sh --webhook-url="$WEBHOOK" --username "${label}${PLATFORM:+ ($PLATFORM)}" --text "$1"
 }
 
 cd /opt/planetiler
