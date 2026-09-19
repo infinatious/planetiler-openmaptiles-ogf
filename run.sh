@@ -21,8 +21,11 @@ set -o pipefail
 
 SECONDS=0
 WEBHOOK="https://discord.com/api/webhooks/1512547109805625364/mae_tCiygS4RbXGT1XGMhksxhZsjQ_9zmiQuECRaX7YcsAkDFW4_-EiYOjtgpELWk4_-"
+# PLATFORM is unset on inf-11008 (hostname alone is unambiguous there); the
+# cloud build scripts export PLATFORM=GCP/AWS before calling this so Discord
+# messages from any run consistently read "<hostname> (<platform>)".
 notify() {
-  /opt/discord.sh --webhook-url="$WEBHOOK" --username "$(hostname) - Planetiler Production server" --text "$1"
+  /opt/discord.sh --webhook-url="$WEBHOOK" --username "$(hostname)${PLATFORM:+ ($PLATFORM)}" --text "$1"
 }
 
 cd /opt/planetiler
