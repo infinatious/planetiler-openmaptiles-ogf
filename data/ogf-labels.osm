@@ -5,7 +5,15 @@
        same osm_id block (99990000001-99990000014) they used - Planetiler
        rejects negative OSM element IDs, unlike raw imposm3/PostGIS. Merged into
        the OGF planet PBF before each Planetiler run since there is no
-       post-import SQL step in this pipeline. -->
+       post-import SQL step in this pipeline.
+
+       NOTE: id 99990000003 (Uletha) intentionally removed 2026-09-19 - OGF's
+       real planet data already has a genuine place=continent node named
+       "Uletha" (osm id 92815640, added 2017), so injecting this one too
+       produced two separate "Uletha" labels on the map at two different
+       coordinates. None of the other 8 continents or 5 oceans have a real
+       equivalent node in the planet data (checked directly), so they still
+       need the injected point. -->
   <node id="99990000001" lat="-39.02" lon="147.31" version="1">
     <tag k="place" v="continent"/>
     <tag k="name" v="South Archanta"/>
@@ -13,10 +21,6 @@
   <node id="99990000002" lat="-3.16" lon="143.44" version="1">
     <tag k="place" v="continent"/>
     <tag k="name" v="North Archanta"/>
-  </node>
-  <node id="99990000003" lat="49.15" lon="84.2" version="1">
-    <tag k="place" v="continent"/>
-    <tag k="name" v="Uletha"/>
   </node>
   <node id="99990000004" lat="-1.76" lon="17.75" version="1">
     <tag k="place" v="continent"/>
