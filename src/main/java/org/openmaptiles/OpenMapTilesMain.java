@@ -34,27 +34,26 @@ public class OpenMapTilesMain {
       .fetchWikidataNameTranslations(sourcesDir.resolve("wikidata_names.json"))
       // defer creation of the profile because it depends on data from the runner
       .setProfile(OpenMapTilesProfile::new)
+      // OGF customization: no lake_centerline or natural_earth sources at all - both are
+      // real-world-only datasets (real lakes, real countries/ice-shelves/populated places)
+      // with no OpenGeoFiction equivalent. Every layer that consumes them
+      // (Boundary/Landcover/Landuse/MountainPeak/Place/Transportation/Water/WaterName/Waterway)
+      // degrades gracefully to "no natural earth features" when the source isn't registered -
+      // for real-world-specific special cases (e.g. Transportation's Great Britain motorway
+      // handling) that's the correct behavior; for generalized geometry/ranking that OGF needs
+      // real content for (landcover z0-z6, water/ocean generalization, country/state ranking)
+      // that's handled by dedicated OGF-specific code instead (see ogf-profile addons).
       // override any of these with arguments: --osm_path=... or --osm_url=...
       // or OSM_PATH=... OSM_URL=... environmental argument
       // or osm_path=... osm_url=... in a config file
-      .addShapefileSource("EPSG:3857", OpenMapTilesProfile.LAKE_CENTERLINE_SOURCE,
-        sourcesDir.resolve("lake_centerline.shp.zip"),
-        // upstream is at https://github.com/acalcutt/osm-lakelines/releases/download/latest/lake_centerline.shp.zip ,
-        // following is same URL as used in the OpenMapTiles (but SHP format), a mirror maintained by MapTiler
-        "https://dev.maptiler.download/geodata/omt/lake_centerline.shp.zip")
       .addShapefileSource(OpenMapTilesProfile.WATER_POLYGON_SOURCE,
         sourcesDir.resolve("water-polygons-split-3857.zip"),
-        "https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip")
-      .addNaturalEarthSource(OpenMapTilesProfile.NATURAL_EARTH_SOURCE,
-        sourcesDir.resolve("natural_earth_vector.sqlite.zip"),
-        // upstream is at https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip ,
-        // following is same URL as used in the OpenMapTiles, a mirror maintained by MapTiler
-        "https://dev.maptiler.download/geodata/omt/natural_earth_vector.sqlite.zip")
+        "https://data.opengeofiction.net/extracts/water-polygons-split-3857.zip")
       .addOsmSource(OpenMapTilesProfile.OSM_SOURCE,
         sourcesDir.resolve(area.replaceAll("[^a-zA-Z]+", "_") + ".osm.pbf"),
-        "planet".equalsIgnoreCase(area) ? ("aws:latest") : ("geofabrik:" + area))
-      // override with --mbtiles=... argument or MBTILES=... env var or mbtiles=... in a config file
-      .setOutput("mbtiles", dataDir.resolve("output.mbtiles"))
+        "https://data.opengeofiction.net/backups/ogf-planet.osm.pbf")
+      // override with --output=... argument or OUTPUT=... env var or output=... in a config file
+      .setOutput("pmtiles", dataDir.resolve("ogf.pmtiles"))
       .run();
 
     LOGGER.info("""

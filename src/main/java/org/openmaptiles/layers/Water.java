@@ -163,10 +163,17 @@ public class Water implements
 
   @Override
   public void processOsmWater(SourceFeature feature, FeatureCollector features) {
+    // OGF customization: no natural_earth source means no ne_110m/50m/10m_ocean at z0-5 (see
+    // processNaturalEarth below) - render ocean from the OSM-derived water_polygons source
+    // (already pointed at OGF's own extract) across the full zoom range instead, matching what
+    // ogfsql.sql's water_z0-z5 views did. Planetiler's own per-zoom pixel-size filtering
+    // (setMinPixelSizeBelowZoom elsewhere in this class, and the core engine's automatic
+    // sub-pixel feature dropping) handles the generalization that used to require hand-built
+    // cascading z0-z6 SQL tables.
     features.polygon(LAYER_NAME)
       .setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, FieldValues.CLASS_OCEAN)
-      .setMinZoom(6);
+      .setMinZoom(0);
   }
 
   @Override
@@ -176,7 +183,11 @@ public class Water implements
       features.polygon(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
         .setMinPixelSizeBelowZoom(11, 2)
-        .setMinZoom(6)
+        // OGF customization: was 6 (large lakes below z6 came from natural_earth, now removed -
+        // see the comment on processOsmWater above); large real lakes will still naturally drop
+        // out below their pixel-size threshold at low zoom, this just makes them eligible to
+        // render whenever they're big enough to matter, matching ogfsql.sql's water_z0-z5 views.
+        .setMinZoom(0)
         .setAttr(Fields.ID, element.source().id())
         .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0)
         .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)

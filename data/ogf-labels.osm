@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="ogf-planetiler-continent-ocean-labels">
+  <!-- Continent and ocean label points, ported 1:1 from ogfsql.sql's
+       "Add OGF Continents" / "Add OGF Oceans" INSERT statements, including the
+       same osm_id block (99990000001-99990000014) they used - Planetiler
+       rejects negative OSM element IDs, unlike raw imposm3/PostGIS. Merged into
+       the OGF planet PBF before each Planetiler run since there is no
+       post-import SQL step in this pipeline. -->
+  <node id="99990000001" lat="-39.02" lon="147.31" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="South Archanta"/>
+  </node>
+  <node id="99990000002" lat="-3.16" lon="143.44" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="North Archanta"/>
+  </node>
+  <node id="99990000003" lat="49.15" lon="84.2" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Uletha"/>
+  </node>
+  <node id="99990000004" lat="-1.76" lon="17.75" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Tarephia"/>
+  </node>
+  <node id="99990000005" lat="-40.85" lon="39.55" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Antarephia"/>
+  </node>
+  <node id="99990000006" lat="52.16" lon="-88.24" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Ereva"/>
+  </node>
+  <node id="99990000007" lat="45.34" lon="-147.13" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Orano"/>
+  </node>
+  <node id="99990000008" lat="-15.96" lon="-130.78" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Pelanesia"/>
+  </node>
+  <node id="99990000009" lat="-38.82" lon="-64.16" version="1">
+    <tag k="place" v="continent"/>
+    <tag k="name" v="Kartumia"/>
+  </node>
+  <node id="99990000010" lat="43.0879" lon="-11.5755" version="1">
+    <tag k="place" v="ocean"/>
+    <tag k="name" v="North Hesperic Ocean"/>
+    <tag k="name:en" v="North Hesperic Ocean"/>
+  </node>
+  <node id="99990000011" lat="-46.672" lon="-14.963" version="1">
+    <tag k="place" v="ocean"/>
+    <tag k="name" v="South Hesperic Ocean"/>
+    <tag k="name:en" v="South Hesperic Ocean"/>
+  </node>
+  <node id="99990000012" lat="35.8605" lon="175.0562" version="1">
+    <tag k="place" v="ocean"/>
+    <tag k="name" v="North Ardentic Ocean"/>
+    <tag k="name:en" v="North Ardentic Ocean"/>
+  </node>
+  <node id="99990000013" lat="-30.1487" lon="-160.8848" version="1">
+    <tag k="place" v="ocean"/>
+    <tag k="name" v="South Ardentic Ocean"/>
+    <tag k="name:en" v="South Ardentic Ocean"/>
+  </node>
+  <node id="99990000014" lat="-23.2701" lon="85.8039" version="1">
+    <tag k="place" v="ocean"/>
+    <tag k="name" v="Asperic Ocean"/>
+    <tag k="name:en" v="Asperic Ocean"/>
+  </node>
+</osm>

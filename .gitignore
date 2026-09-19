@@ -20,4 +20,6 @@ target/
 .settings
 bin/
 
-data/
+data/*
+!data/ogf-labels.osm
+!data/ogf-labels.osm.pbf
