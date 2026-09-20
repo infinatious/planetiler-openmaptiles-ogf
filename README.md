@@ -1,27 +1,60 @@
-# Planetiler OpenMapTiles Profile
+# OGF Vector Tile Pipeline
 
-This OpenMapTiles profile for [Planetiler](https://github.com/onthegomap/planetiler) is based
-on [OpenMapTiles](https://github.com/openmaptiles/openmaptiles).
+This is [OpenGeoFiction](https://opengeofiction.net)'s fork of [`planetiler-openmaptiles`](https://github.com/openmaptiles/planetiler-openmaptiles), a Java port of [OpenMapTiles](https://github.com/openmaptiles/openmaptiles) for [Planetiler](https://github.com/onthegomap/planetiler). It replaced OGF's old OpenMapTiles/imposm3/PostGIS pipeline in September 2026 — a full-world build now takes minutes instead of days, since Planetiler reads OSM PBF directly with no database step.
+
+OGF is a fictional-Earth collaborative mapping project, not real-world OpenStreetMap — so on top of the upstream port, this fork:
+
+- **Removes all Natural Earth dependencies** (no real-world basemap data makes sense for a fictional world) — land/water polygon sources point at `data.opengeofiction.net` instead, and `Water.java`/`Landcover.java` generalize low-zoom water/land directly from those rather than a separate real-world dataset.
+- **Ports OGF's route-shield system** (`OgfRouteRules.java`) — a literal 1:1 translation of the old pipeline's ~500-line `ogfsql.sql` ref-prefix + bounding-box rules (Rougemont, Ouanatchkan, Deodeca, and every other named OGF region) into Java, wired into `TransportationName.java`.
+- **Computes real country/state label ranking** (`Place.java`) from actual `admin_level=2`/`4` boundary area, via a small OSM pre-processing pass (`filter_admin_areas.py`), instead of a flat hardcoded value.
+- **Injects OGF's continent/ocean label points** (`data/ogf-labels.osm.pbf`) that Natural Earth would otherwise have supplied.
+
+See **OGF customizations** below for details on each of these. This repo is just the code — for the full production architecture it feeds into (scheduled builds, Cloud Run serving, DNS, etc.), see the `OGF Vector Pipeline (Planetiler + TileServerGL + Americana).md` operations doc.
 
 ## How to run
 
-Using pre-built docker image:
-
 ```bash
-docker run --rm -v "$(pwd)/data":/data openmaptiles/planetiler-openmaptiles:latest --force --download --area=monaco
+./mvnw clean package -DskipTests   # NOT `compile` — see gotcha below
+./run.sh                            # full production world run, z0-14 → data/ogf.pmtiles
 ```
 
-Or to build from source, after [installing Java 21+](https://adoptium.net/installation):
+**Build gotcha**: after editing any `.java` file, always rebuild with `clean package` (or at least plain `package`), never `./mvnw compile` — `compile` only refreshes `target/classes/*.class`, not the shaded `target/*-with-deps.jar` that `run.sh` actually runs. A fix that "does nothing" is usually just this.
+
+**Test runs** — no separate QA/TST scripts; `run.sh` forwards extra args straight to the `java` command, and later `--key=value` args override the defaults. Always pass `--output=` on a test run or it'll overwrite `data/ogf.pmtiles`:
 
 ```bash
-# Build the project (use mvnw.cmd on windows):
-./mvnw clean package
-# Then run:
-java -jar target/*with-deps.jar --force --download --area=monaco
+./run.sh --maxzoom=7 --output=data/ogf-test.pmtiles                                       # whole world, low detail, fast
+./run.sh --bounds=128.562,-45.089,163.630,-25.681 --output=data/ogf-test.pmtiles          # one region, full detail
 ```
 
-See [Planetiler README.md](https://github.com/onthegomap/planetiler/blob/main/README.md) for more description of the
-available options.
+The upstream base project also supports running via pre-built Docker image or plain `--area=` extracts — see [Planetiler README.md](https://github.com/onthegomap/planetiler/blob/main/README.md) for those generic options, though OGF's own builds always go through `run.sh` above.
+
+## OGF customizations
+
+### Adding/updating route-shield rules
+
+`OgfRouteRules.java` is organized by region name (matching `ogfsql.sql`'s old comment headers — Rougemont, Ouanatchkan, Deodeca, etc.):
+
+1. Ref-prefix classification/rewrite logic goes in `PIPELINE` (**order matters** — later rules can depend on earlier rewrites); structural/region-specific fixups go in `applyRegionFixups()`/`ROUTE_VARIANTS`.
+2. **Always wrap raw lon/lat through `GeoUtils.getWorldX()`/`getWorldY()`** when building an `Envelope` — Planetiler geometry is normalized `[0,1]×[0,1]` world space, not degrees. Passing raw degrees compiles fine and just silently never matches — the single most likely way a new rule quietly fails.
+3. Rebuild (`clean package`, see gotcha above), then run `OgfRouteRulesSmokeTest.java`'s standalone `main()` (not JUnit) — add a case for your new rule, or just run the existing ones as a sanity check.
+4. Validate against real data with a bounded test run, then decode a tile and check the way's `network`/`route_1_network`/`route_1_ref` attributes:
+   ```bash
+   ~/go/bin/go-pmtiles tile data/ogf-test.pmtiles Z X Y | gunzip -c > tile.raw
+   python3 -c "import mapbox_vector_tile; print(mapbox_vector_tile.decode(open('tile.raw','rb').read())['transportation'])"
+   ```
+
+### Country/state label ranking
+
+Country/state point `rank` (1-6, driving label priority/min-zoom) comes from real boundary area, not a flat constant:
+
+1. `run.sh` runs `osmium tags-filter ... boundary=administrative` → `osmium export --geometry-types=polygon` → `filter_admin_areas.py` (keeps `admin_level∈{2,4}`) → `data/sources/ogf-admin-areas.geojson`, registered as a second Planetiler source (`ogf_admin_areas`).
+2. `Place.processOgfAdminArea()` indexes each polygon's area into `COUNTRY_AREA_RANKS` (a separate scale from the existing island/protected-area `AREA_RANKS`, which tops out too low to distinguish countries). Points with no matching boundary default to rank 3.
+3. To retune, adjust `COUNTRY_AREA_RANKS` thresholds or `areaRankMinZoom()` directly in `Place.java`.
+
+### Low-zoom landcover
+
+`Landcover.postProcess()` merges same-subclass patches at z≤6 via `FeatureMerge.mergeNearbyPolygons` (not `mergeOverlappingPolygons`, so *nearby*-but-not-touching patches still merge), with `minDist`/`buffer` scaled by zoom via the `LOW_ZOOM_MERGE_DISTANCE` `TreeMap`. If low-zoom landcover looks patchy or over-merged after a data change, that map's values are the first thing to adjust.
 
 ## Differences from OpenMapTiles
 
@@ -141,9 +174,20 @@ tile features, and logic for post-processing tile geometries.
 features to layer handlers and merges the results.
 
 [OpenMapTilesMain](src/main/java/org/openmaptiles/OpenMapTilesMain.java) is the main driver that
-registers source data and output location.
+registers source data and output location — this is where OGF's source-config overrides live (Natural Earth removed, `water_polygons`/OSM source repointed at `data.opengeofiction.net`, `ogf_admin_areas` GeoJSON source registered, output format `pmtiles`).
+
+OGF-specific additions on top of the upstream layout above:
+
+- [`OgfRouteRules.java`](src/main/java/org/openmaptiles/layers/OgfRouteRules.java) — the route-shield port (see **OGF customizations** above)
+- [`OgfRouteRulesSmokeTest.java`](src/main/java/org/openmaptiles/layers/OgfRouteRulesSmokeTest.java) — standalone `main()` smoke test for the above, not JUnit
+- [`filter_admin_areas.py`](filter_admin_areas.py) — filters raw `osmium export` GeoJSON down to `admin_level∈{2,4}` polygons for country/state ranking
+- [`run.sh`](run.sh) — the only run script; handles planet data download, the Planetiler build itself, and Discord notifications
+- [`data/ogf-labels.osm.pbf`](data/ogf-labels.osm.pbf) — 9 continent + 5 ocean label points, merged into the OSM input before every run
+- `Water.java`, `Landcover.java`, `Place.java`, `TransportationName.java` (all in [layers](src/main/java/org/openmaptiles/layers)) — modified from upstream, see **OGF customizations** above
 
 ## Regenerating Code
+
+**Note for this fork**: this regenerates the upstream schema/tables code only (`generated` package) — it doesn't touch or affect OGF's own customizations (`OgfRouteRules.java`, `OpenMapTilesMain.java`'s source overrides, etc.), which live in separate files untouched by this script. Safe to run when picking up a newer OpenMapTiles schema version.
 
 To run `Generate.java`,
 use [scripts/regenerate-openmaptiles.sh](https://github.com/openmaptiles/planetiler-openmaptiles/blob/main/scripts/regenerate-openmaptiles.sh)
