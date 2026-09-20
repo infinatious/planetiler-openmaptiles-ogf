@@ -47,7 +47,14 @@ osmium export data/sources/ogf-admin-boundaries.osm.pbf --geometry-types=polygon
   -o data/sources/ogf-admin-areas-raw.geojson --overwrite
 python3 filter_admin_areas.py data/sources/ogf-admin-areas-raw.geojson data/sources/ogf-admin-areas.geojson
 
-java -Xmx16g -jar target/*with-deps.jar --force --download --boundary_osm_only=true \
+# Size the heap off whatever RAM is actually on this machine (was a static
+# -Xmx16g, seemingly just sized for inf-11008's 24GB and never revisited
+# after moving to 62-64GB cloud build VMs) - 80% leaves headroom for the
+# OS/JVM off-heap overhead without needing to be re-tuned every time the
+# machine type changes.
+TOTAL_MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
+HEAP_GB=$((TOTAL_MEM_GB * 80 / 100))
+java -Xmx${HEAP_GB}g -jar target/*with-deps.jar --force --download --boundary_osm_only=true \
   --osm_path=data/sources/ogf-planet-with-labels.osm.pbf \
   --ogf_admin_areas_path=data/sources/ogf-admin-areas.geojson \
   --output=data/ogf.pmtiles \
