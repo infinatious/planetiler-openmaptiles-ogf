@@ -19,7 +19,11 @@ set -o errexit
 set -o pipefail
 
 SECONDS=0
-WEBHOOK="https://discord.com/api/webhooks/1512547109805625364/mae_tCiygS4RbXGT1XGMhksxhZsjQ_9zmiQuECRaX7YcsAkDFW4_-EiYOjtgpELWk4_-"
+# Discord webhook comes from the environment (GCP build VMs export it from Secret
+# Manager) or, on the dev instance, from /etc/ogf-planetiler.env. Never hardcode it:
+# this repo is public. No webhook set means no notifications.
+[ -r /etc/ogf-planetiler.env ] && . /etc/ogf-planetiler.env
+WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
 # PLATFORM is unset on inf-11008 (hostname alone is unambiguous there); the
 # cloud build scripts export PLATFORM=GCP/AWS before calling this so Discord
 # messages from any run consistently read "<hostname> (<platform>)". Cloud
@@ -28,10 +32,11 @@ WEBHOOK="https://discord.com/api/webhooks/1512547109805625364/mae_tCiygS4RbXGT1X
 # suffix only when the hostname itself doesn't already say it.
 notify() {
   local host label
+  [ -n "$WEBHOOK" ] || return 0
   host="$(hostname)"
   label="$host"
   [[ "${host,,}" == *planetiler* ]] || label="$host - Planetiler"
-  /opt/discord.sh --webhook-url="$WEBHOOK" --username "${label}${PLATFORM:+ ($PLATFORM)}" --text "$1"
+  /opt/discord.sh --webhook-url="$WEBHOOK" --username "${label}${PLATFORM:+ ($PLATFORM)}" --text "$1" || true
 }
 
 cd /opt/planetiler
