@@ -28,7 +28,7 @@ WEBHOOK="${DISCORD_WEBHOOK_URL:-}"
 # (prd9-ogfpt-ve01, dv32-ogfpt-ct01), so it is used as the sender name as is.
 notify() {
   [ -n "$WEBHOOK" ] || return 0
-  /opt/discord.sh --webhook-url="$WEBHOOK" --username "$(hostname)" --text "$1" || true
+  /opt/discord.sh --webhook-url="$WEBHOOK" --username "$(hostname -s)" --text "$1" || true
 }
 
 cd /opt/planetiler
